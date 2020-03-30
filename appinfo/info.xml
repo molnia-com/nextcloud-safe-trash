@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>restrictedtrashbin</id>
+    <name>Restricted Trashbin</name>
+    <summary>Restricted access to shared trash only for admins</summary>
+    <description><![CDATA[Restricted access to shared trash only for admins]]></description>
+    <version>0.0.1</version>
+    <licence>agpl</licence>
+    <author mail="sdrobov@molnia.com">Sergey Drobov</author>
+    <namespace>Molnia</namespace>
+    <types>
+        <dav/>
+    </types>
+    <category>files</category>
+    <bugs>https://gtl.infra.molnia.com/nextcloud/plugin-admin-empty-trash/issues</bugs>
+    <dependencies>
+        <nextcloud min-version="18" max-version="18"/>
+    </dependencies>
+    <sabre>
+        <plugins>
+            <plugin>Molnia\Nextcloud\Plugin\DeleteServerPlugin</plugin>
+        </plugins>
+    </sabre>
+</info>
