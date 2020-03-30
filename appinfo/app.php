@@ -1,6 +1,6 @@
 <?php
 
-use Molnia\Nextcloud\AppInfo\Application;
+use OCA\Molnia\AppInfo\Application;
 
 /** @var Application $app */
 $app = OC::$server->query(Application::class);

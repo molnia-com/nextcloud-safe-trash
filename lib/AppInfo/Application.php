@@ -1,8 +1,9 @@
 <?php
 
-namespace Molnia\Nextcloud\AppInfo;
+namespace OCA\Molnia\AppInfo;
 
 
+use OCA\Molnia\Plugin\DeleteServerPlugin;
 use OCP\AppFramework\App;
 use OCP\EventDispatcher\Event;
 use OCP\SabrePluginEvent;
@@ -17,12 +18,15 @@ class Application extends App
     public function register()
     {
         $dispatcher = $this->getContainer()->getServer()->getEventDispatcher();
-        $dispatcher->addListener('OCA\DAV\Connector\Sabre::addPlugin', function (Event $ev) {
+        $dispatcher->addListener('OCA\DAV\Connector\Sabre::addPlugin', static function (Event $ev) {
+            /** @var SabrePluginEvent $ev */
             if (!($ev instanceof SabrePluginEvent)) {
                 return;
             }
 
-            $this->getContainer()->getServer()->getLogger()->warning(__METHOD__ . ' called');
+            if ($server = $ev->getServer()) {
+                $server->addPlugin(new DeleteServerPlugin());
+            }
         });
     }
 }

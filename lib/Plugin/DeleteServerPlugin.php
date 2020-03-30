@@ -1,7 +1,7 @@
 <?php
 
 
-namespace Molnia\Nextcloud\Plugin;
+namespace OCA\Molnia\Plugin;
 
 
 use Sabre\DAV\Server;
@@ -17,7 +17,7 @@ class DeleteServerPlugin extends ServerPlugin
     /**
      * @inheritDoc
      */
-    function initialize(Server $server)
+    public function initialize(Server $server): void
     {
         $this->server = $server;
         $this->server->on('beforeMethod:DELETE', [$this, 'onDelete']);

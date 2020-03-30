@@ -16,10 +16,11 @@
     <bugs>https://gtl.infra.molnia.com/nextcloud/plugin-admin-empty-trash/issues</bugs>
     <dependencies>
         <nextcloud min-version="18" max-version="18"/>
+        <php min-version="7.3" max-version="7.4"/>
     </dependencies>
     <sabre>
         <plugins>
-            <plugin>Molnia\Nextcloud\Plugin\DeleteServerPlugin</plugin>
+            <plugin>OCA\Molnia\Plugin\DeleteServerPlugin</plugin>
         </plugins>
     </sabre>
 </info>
