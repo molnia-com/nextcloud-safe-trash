@@ -11,6 +11,8 @@ use Sabre\HTTP\ResponseInterface;
 
 class DeleteServerPlugin extends ServerPlugin
 {
+    public const TRASHBIN = 'trashbin';
+
     /** @var Server */
     private $server;
 
@@ -23,8 +25,22 @@ class DeleteServerPlugin extends ServerPlugin
         $this->server->on('beforeMethod:DELETE', [$this, 'onDelete']);
     }
 
-    public function onDelete(RequestInterface $request, ResponseInterface $response)
+    public function onDelete(RequestInterface $request, ResponseInterface $response): bool
     {
-        $this->server->getLogger()->warning(__METHOD__ . ' called');
+        $baseUri = $this->server->getBaseUri();
+        $fullUri = $request->getPath();
+        $userAndFilePath = preg_replace("#{$baseUri}#", '', $fullUri);
+        $parts = explode('/', $userAndFilePath);
+        $where = array_shift($parts);
+        if ($where !== self::TRASHBIN) {
+            return true;
+        }
+
+        $user = array_shift($parts);
+        $path = implode('/', $parts);
+
+        trigger_error(__METHOD__ . "; where={$where}; user={$user}; path={$path}");
+
+        return true;
     }
 }
