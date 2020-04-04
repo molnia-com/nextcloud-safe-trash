@@ -18,14 +18,17 @@ class Application extends App
     public function register()
     {
         $dispatcher = $this->getContainer()->getServer()->getEventDispatcher();
-        $dispatcher->addListener('OCA\DAV\Connector\Sabre::addPlugin', static function (Event $ev) {
+        $dispatcher->addListener('OCA\DAV\Connector\Sabre::addPlugin', function (Event $ev) {
             /** @var SabrePluginEvent $ev */
             if (!($ev instanceof SabrePluginEvent)) {
                 return;
             }
 
             if ($server = $ev->getServer()) {
-                $server->addPlugin(new DeleteServerPlugin());
+                $plugin = new DeleteServerPlugin();
+                $plugin->setApp($this);
+
+                $server->addPlugin($plugin);
             }
         });
     }
