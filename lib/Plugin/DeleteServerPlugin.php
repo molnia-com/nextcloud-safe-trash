@@ -16,6 +16,7 @@ use OCP\Share\IShare;
 use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\Server;
 use Sabre\DAV\ServerPlugin;
+use Throwable;
 
 class DeleteServerPlugin extends ServerPlugin
 {
@@ -114,10 +115,13 @@ class DeleteServerPlugin extends ServerPlugin
                 IShare::TYPE_ROOM,
             ] as $shareType
         ) {
-            $allShares = array_merge(
-                $allShares,
-                $this->getOcaServer()->getShareManager()->getSharedWith($user->getUID(), $shareType)
-            );
+            try {
+                $shares = $this->getOcaServer()->getShareManager()->getSharedWith($user->getUID(), $shareType);
+            } catch (Throwable $e) {
+                continue;
+            }
+
+            $allShares = array_merge($allShares, $shares);
         }
 
         switch (true) {
