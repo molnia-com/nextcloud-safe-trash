@@ -4,16 +4,12 @@
 namespace OCA\Molnia\Plugin;
 
 
-use Exception;
 use OC\Files\Node\Folder;
-use OC\Files\View;
 use OCA\Files_Trashbin\Sabre\TrashFile;
 use OCA\Files_Trashbin\Sabre\TrashFolder;
 use OCA\Files_Trashbin\Sabre\TrashRoot;
 use OCA\Files_Trashbin\Trash\ITrashManager;
 use OCP\AppFramework\App;
-use OCP\Files\Node;
-use OCP\Files\NotFoundException;
 use OCP\ILogger;
 use OCP\IServerContainer;
 use OCP\IUser;
@@ -121,7 +117,13 @@ class DeleteServerPlugin extends ServerPlugin
         }
 
         $uid = self::$user->getUID();
-        $userDeletedFolder = $suRoot->newFolder("{$uid}__deleted");
+
+        $userDeletedFolderName = "{$uid}__deleted";
+        if ($suRoot->nodeExists($userDeletedFolderName)) {
+            $userDeletedFolderName = $suRoot->getNonExistingName($userDeletedFolderName);
+        }
+        $userDeletedFolder = $suRoot->newFolder($userDeletedFolderName);
+
         foreach ($files as $file) {
             $originalLocation = $file->getOriginalLocation();
             $this->getLogger()->warning(__METHOD__ . ": about to delete {$originalLocation}");
@@ -139,6 +141,7 @@ class DeleteServerPlugin extends ServerPlugin
             $parts = explode('/', trim($originalLocation, '/'));
             if (count($parts) === 1) {
                 $name = $userDeletedFolder->getNonExistingName($originalLocation);
+                $newFile = $suRoot->newFile($name);
             } else {
                 /** @var Folder $lastDir */
                 $lastDir = $userDeletedFolder;
@@ -148,13 +151,15 @@ class DeleteServerPlugin extends ServerPlugin
                     $lastDir = $lastDir->newFolder($part);
                 }
 
-                $name = $userDeletedFolder->getNonExistingName($lastDir);
+                $name = $userDeletedFolder->getNonExistingName($fileName);
+                $newFile = $lastDir->newFile($name);
             }
 
-            $newFile = $suRoot->newFile($name);
             $newFile->putContent($file->get());
         }
-        $userDeletedFolder->delete();
+        /** @var ITrashManager $trashManager */
+        $trashManager = $this->getOcaServer()->query(ITrashManager::class);
+        $trashManager->moveToTrash($userDeletedFolder->getStorage(), $userDeletedFolder->getInternalPath());
 
         return true;
     }
