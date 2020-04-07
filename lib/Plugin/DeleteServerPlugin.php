@@ -4,16 +4,24 @@
 namespace OCA\Molnia\Plugin;
 
 
-use OC\Group\Manager;
+use Exception;
+use OC\Files\Node\Folder;
+use OC\Files\View;
 use OCA\Files_Trashbin\Sabre\TrashFile;
 use OCA\Files_Trashbin\Sabre\TrashFolder;
 use OCA\Files_Trashbin\Sabre\TrashRoot;
+use OCA\Files_Trashbin\Trash\ITrashManager;
 use OCP\AppFramework\App;
+use OCP\Files\Node;
+use OCP\Files\NotFoundException;
 use OCP\ILogger;
 use OCP\IServerContainer;
 use OCP\IUser;
 use OCP\Share\IShare;
+use RuntimeException;
 use Sabre\DAV\Exception\NotFound;
+use Sabre\DAV\ICollection;
+use Sabre\DAV\INode;
 use Sabre\DAV\Server;
 use Sabre\DAV\ServerPlugin;
 use Throwable;
@@ -32,141 +40,17 @@ class DeleteServerPlugin extends ServerPlugin
     /** @var IServerContainer */
     private static $ocaServer;
 
-    /**
-     * @inheritDoc
-     */
-    public function initialize(Server $server): void
-    {
-        $this->setServer($server);
-        $this->getServer()->on('beforeUnbind', [$this, 'beforeUnbind']);
-    }
+    /** @var IUser */
+    private static $user;
 
-    /**
-     * @param Server $server
-     */
-    public function setServer(Server $server): void
-    {
-        self::$server = $server;
-    }
+    /** @var string[] */
+    private static $shares = [];
 
-    /**
-     * @return Server
-     */
-    public function getServer(): Server
-    {
-        return self::$server;
-    }
+    /** @var string[] */
+    private static $processedFiles = [];
 
-    /**
-     * @param string $fullUri
-     * @return bool
-     */
-    public function beforeUnbind(string $fullUri): bool
-    {
-        $this->getLogger()->warning(__METHOD__ . ": path={$fullUri}");
-        if (!$user = $this->getUser($fullUri)) {
-            return true;
-        }
-
-        if ($this->getOcaServer()->getGroupManager()->isAdmin($user->getUID())) {
-            return true;
-        }
-
-        /** @var Manager $groupManager */
-        $groupManager = $this->getOcaServer()->getGroupManager();
-        /** @var IUser $trashOwner */
-        $trashOwner = null;
-        if ($groups = $groupManager->getUserGroups($user)) {
-            foreach ($groups as $group) {
-                if ($groupManager->getSubAdmin()->isSubAdminOfGroup($user, $group)) {
-                    return true;
-                }
-            }
-        } elseif ($serverAdminGroup = $this->getOcaServer()->getGroupManager()->get('admin')) { // fast
-            $trashOwner = $serverAdminGroup->getUsers()[0];
-        } else {
-            $this->getOcaServer()->getUserManager()->callForAllUsers(function (IUser $user) use ($trashOwner) {
-                if (!$trashOwner && $this->getOcaServer()->getGroupManager()->isAdmin($user)) { // safe
-                    $trashOwner = $user;
-                }
-            });
-        }
-
-        try {
-            $node = $this->getServer()->tree->getNodeForPath($fullUri);
-        } catch (NotFound $e) {
-            $this->getLogger()->warning(__METHOD__ . ": getNodeForPath returns 404; path={$fullUri}");
-
-            return true;
-        }
-
-        /** @var IShare[] $allShares */
-        $allShares = [];
-        foreach (
-            [
-                IShare::TYPE_USER,
-                IShare::TYPE_GROUP,
-                IShare::TYPE_USERGROUP,
-                IShare::TYPE_LINK,
-                IShare::TYPE_EMAIL,
-                IShare::TYPE_REMOTE,
-                IShare::TYPE_CIRCLE,
-                IShare::TYPE_REMOTE_GROUP,
-                IShare::TYPE_ROOM,
-            ] as $shareType
-        ) {
-            try {
-                $shares = $this->getOcaServer()->getShareManager()->getSharedWith($user->getUID(), $shareType);
-            } catch (Throwable $e) {
-                continue;
-            }
-
-            $allShares = array_merge($allShares, $shares);
-        }
-
-        switch (true) {
-            case ($node instanceof TrashRoot):
-                /** @var TrashRoot $node */
-                break;
-
-            case ($node instanceof TrashFolder):
-                /** @var TrashFolder $node */
-                break;
-
-            case ($node instanceof TrashFile):
-                /** @var TrashFile $node */
-                $originalPath = $node->getOriginalLocation();
-                foreach ($allShares as $share) {
-                    if (strpos($originalPath, $share->getNode()->getPath()) !== false) {
-                        $this->getLogger()->warning(__METHOD__ . ": {$originalPath} was shared in {$share->getNode()->getPath()}");
-                    }
-                }
-
-                $this->getLogger()->warning(__METHOD__ . ": about to delete {$originalPath}");
-
-                break;
-
-            default:
-                $class = get_class($node);
-                $this->getLogger()->warning(__METHOD__ . "\$node instanceof {$class}");
-
-                break;
-        }
-
-        return true;
-    }
-
-    /**
-     * @return ILogger
-     */
-    public function getLogger(): ILogger
-    {
-        if (!self::$logger && $this->getApp()) {
-            $this->setLogger($this->getOcaServer()->getLogger());
-        }
-
-        return self::$logger;
-    }
+    /** @var Folder */
+    private static $suRoot;
 
     /**
      * @return App
@@ -177,9 +61,162 @@ class DeleteServerPlugin extends ServerPlugin
     }
 
     /**
+     * @inheritDoc
+     */
+    public function initialize(Server $server): void
+    {
+        $this->setServer($server);
+        $this->getServer()->on('beforeUnbind', [$this, 'beforeUnbind']);
+    }
+
+    /**
+     * @param string $fullUri
+     * @return bool
+     */
+    public function beforeUnbind(string $fullUri): bool
+    {
+        // beforeUnbind вызывается так же при перемещении
+        if (!$this->isDelete()) {
+            return true;
+        }
+
+        if (!$this->getUser($fullUri)) {
+            return true;
+        }
+
+        if ($this->getOcaServer()->getGroupManager()->isAdmin(self::$user->getUID())) {
+            return true;
+        }
+
+        if (!$suRoot = $this->getSuperAdminRoot()) {
+            throw new RuntimeException(__METHOD__ . 'Cant get superadmin trash');
+        }
+
+        try {
+            $node = $this->getServer()->tree->getNodeForPath($fullUri);
+        } catch (NotFound $e) {
+            $this->getLogger()->warning(__METHOD__ . ": getNodeForPath returns 404; path={$fullUri}");
+
+            return true;
+        }
+
+        /** @var TrashFile[] $files */
+        $files = [];
+        switch (true) {
+            case ($node instanceof TrashRoot):
+            case ($node instanceof TrashFolder):
+                /** @var TrashRoot|TrashFolder $node */
+                $files = $this->getAllNodesRecursive($node);
+
+                break;
+
+            case ($node instanceof TrashFile):
+                /** @var TrashFile $node */
+                $files = [$node];
+
+                break;
+
+            default:
+                return true;
+        }
+
+        $uid = self::$user->getUID();
+        $userDeletedFolder = $suRoot->newFolder("{$uid}__deleted");
+        foreach ($files as $file) {
+            $originalLocation = $file->getOriginalLocation();
+            $this->getLogger()->warning(__METHOD__ . ": about to delete {$originalLocation}");
+
+            if (!$this->wasPathShared($originalLocation)) {
+                continue;
+            }
+
+            if (in_array($originalLocation, self::$processedFiles)) {
+                continue;
+            }
+
+            self::$processedFiles[] = $originalLocation;
+
+            $parts = explode('/', trim($originalLocation, '/'));
+            if (count($parts) === 1) {
+                $name = $userDeletedFolder->getNonExistingName($originalLocation);
+            } else {
+                /** @var Folder $lastDir */
+                $lastDir = $userDeletedFolder;
+                $fileName = array_pop($parts);
+
+                foreach ($parts as $part) {
+                    $lastDir = $lastDir->newFolder($part);
+                }
+
+                $name = $userDeletedFolder->getNonExistingName($lastDir);
+            }
+
+            $newFile = $suRoot->newFile($name);
+            $newFile->putContent($file->get());
+        }
+        $userDeletedFolder->delete();
+
+        return true;
+    }
+
+    /**
+     * @param App $app
+     */
+    public function setApp(App $app): void
+    {
+        self::$app = $app;
+    }
+
+    /**
+     * @return bool
+     */
+    private function isDelete(): bool
+    {
+        return strtolower($this->getOcaServer()->getRequest()->getMethod()) === 'delete';
+    }
+
+    /**
+     * @return IUser|null
+     */
+    private function getSuperAdmin(): ?IUser
+    {
+        // fast
+        if (
+            ($serverAdminGroup = $this->getOcaServer()
+                ->getGroupManager()
+                ->get('admin')) && $adminUsers = $serverAdminGroup->getUsers()
+        ) {
+            return current($adminUsers);
+        }
+
+        // safe
+        /** @var IUser $superAdmin */
+        $superAdmin = null;
+        $this->getOcaServer()->getUserManager()->callForAllUsers(function (IUser $user) use (&$superAdmin) {
+            if (!$superAdmin && $this->getOcaServer()->getGroupManager()->isAdmin($user)) {
+                $superAdmin = $user;
+            }
+        });
+
+        return $superAdmin;
+    }
+
+    /**
+     * @return ILogger
+     */
+    private function getLogger(): ILogger
+    {
+        if (!self::$logger && $this->getApp()) {
+            $this->setLogger($this->getOcaServer()->getLogger());
+        }
+
+        return self::$logger;
+    }
+
+    /**
      * @param ILogger $logger
      */
-    public function setLogger(ILogger $logger): void
+    private function setLogger(ILogger $logger): void
     {
         self::$logger = $logger;
     }
@@ -187,7 +224,7 @@ class DeleteServerPlugin extends ServerPlugin
     /**
      * @return IServerContainer
      */
-    public function getOcaServer(): IServerContainer
+    private function getOcaServer(): IServerContainer
     {
         if (!self::$ocaServer && $this->getApp()) {
             $this->setOcaServer($this->getApp()->getContainer()->getServer());
@@ -199,36 +236,134 @@ class DeleteServerPlugin extends ServerPlugin
     /**
      * @param IServerContainer $ocaServer
      */
-    public function setOcaServer(IServerContainer $ocaServer): void
+    private function setOcaServer(IServerContainer $ocaServer): void
     {
         self::$ocaServer = $ocaServer;
     }
 
     /**
-     * @param string $fullUri
-     * @return IUser
+     * @param Server $server
      */
-    private function getUser(string $fullUri): ?IUser
+    private function setServer(Server $server): void
     {
-        $baseUri = $this->getServer()->getBaseUri();
-        $userAndFilePath = preg_replace("#{$baseUri}#", '', $fullUri);
-        $parts = explode('/', $userAndFilePath);
-        array_shift($parts);
-        $uid = array_shift($parts);
-        if (!$user = $this->getOcaServer()->getUserManager()->get($uid)) {
-            $this->getLogger()->warning(__METHOD__ . ': get user by uid fails');
-
-            return null;
-        }
-
-        return $user;
+        self::$server = $server;
     }
 
     /**
-     * @param App $app
+     * @return Server
      */
-    public function setApp(App $app): void
+    private function getServer(): Server
     {
-        self::$app = $app;
+        return self::$server;
+    }
+
+    /**
+     * @param string $fullUri
+     * @return IUser|null
+     */
+    private function getUser(string $fullUri): ?IUser
+    {
+        if (!self::$user) {
+            $baseUri = $this->getServer()->getBaseUri();
+            $userAndFilePath = preg_replace("#{$baseUri}#", '', $fullUri);
+            $parts = explode('/', $userAndFilePath);
+            array_shift($parts);
+            $uid = array_shift($parts);
+
+            self::$user = $this->getOcaServer()->getUserManager()->get($uid);
+        }
+
+        return self::$user;
+    }
+
+    /**
+     * @param ICollection $collection
+     * @return INode[]
+     */
+    private function getAllNodesRecursive(ICollection $collection): array
+    {
+        $nodes = [];
+        foreach ($collection->getChildren() as $child) {
+            if ($child instanceof ICollection) {
+                $nodes = array_merge($nodes, $this->getAllNodesRecursive($child));
+            } else {
+                $nodes[] = $child;
+            }
+        }
+
+        return $nodes;
+    }
+
+    /**
+     * @param string $path
+     * @return bool
+     */
+    private function wasPathShared(string $path): bool
+    {
+        if (!self::$shares) {
+            self::$shares = [];
+
+            foreach (
+                [
+                    IShare::TYPE_USER,
+                    IShare::TYPE_GROUP,
+                    IShare::TYPE_USERGROUP,
+                    IShare::TYPE_LINK,
+                    IShare::TYPE_EMAIL,
+                    IShare::TYPE_REMOTE,
+                    IShare::TYPE_CIRCLE,
+                    IShare::TYPE_REMOTE_GROUP,
+                    IShare::TYPE_ROOM,
+                ] as $shareType
+            ) {
+                try {
+                    $shares = $this->getOcaServer()
+                        ->getShareManager()
+                        ->getSharedWith(self::$user->getUID(), $shareType);
+                    $sharePaths = array_map(static function (IShare $share) {
+                        $sharePath = $share->getNode()->getPath();
+                        $sharePath = trim($sharePath, '/');
+                        $pathParts = explode('/', $sharePath);
+                        array_shift($pathParts); // user
+                        array_shift($pathParts); // 'files'
+
+                        return implode('/', $pathParts);
+                    },
+                        $shares);
+
+                    self::$shares = array_merge(self::$shares, $sharePaths);
+                } catch (Throwable $e) {
+                    continue;
+                }
+            }
+
+            self::$shares = array_filter(array_unique(self::$shares));
+        }
+
+        foreach (self::$shares as $share) {
+            if (strpos($path, $share) !== false) {
+                $this->getLogger()->warning(__METHOD__ . ": {$path} was shared in {$share}");
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return Folder|null
+     */
+    private function getSuperAdminRoot(): ?Folder
+    {
+        if (!self::$suRoot) {
+            if (!$su = $this->getSuperAdmin()) {
+                return null;
+            }
+
+            self::$suRoot = $this->getOcaServer()->getRootFolder()->getUserFolder($su->getUID());
+        }
+
+        return self::$suRoot;
     }
 }
