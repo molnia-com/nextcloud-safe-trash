@@ -4,13 +4,11 @@
 namespace OCA\Molnia\Plugin;
 
 
-use OC\Files\Node\Folder;
 use OCA\Files_Trashbin\Sabre\TrashFile;
 use OCA\Files_Trashbin\Sabre\TrashFolder;
 use OCA\Files_Trashbin\Sabre\TrashRoot;
-use OCA\Files_Trashbin\Trash\ITrashManager;
+use OCA\Files_Trashbin\Trashbin;
 use OCP\AppFramework\App;
-use OCP\ILogger;
 use OCP\IServerContainer;
 use OCP\IUser;
 use OCP\Share\IShare;
@@ -30,9 +28,6 @@ class DeleteServerPlugin extends ServerPlugin
     /** @var App */
     private static $app;
 
-    /** @var ILogger */
-    private static $logger;
-
     /** @var IServerContainer */
     private static $ocaServer;
 
@@ -44,9 +39,6 @@ class DeleteServerPlugin extends ServerPlugin
 
     /** @var string[] */
     private static $processedFiles = [];
-
-    /** @var Folder */
-    private static $suRoot;
 
     /**
      * @return App
@@ -84,15 +76,13 @@ class DeleteServerPlugin extends ServerPlugin
             return true;
         }
 
-        if (!$suRoot = $this->getSuperAdminRoot()) {
-            throw new RuntimeException(__METHOD__ . 'Cant get superadmin trash');
+        if (!$su = $this->getSuperAdmin()) {
+            throw new RuntimeException('Cant get superadmin');
         }
 
         try {
             $node = $this->getServer()->tree->getNodeForPath($fullUri);
         } catch (NotFound $e) {
-            $this->getLogger()->warning(__METHOD__ . ": getNodeForPath returns 404; path={$fullUri}");
-
             return true;
         }
 
@@ -118,15 +108,14 @@ class DeleteServerPlugin extends ServerPlugin
 
         $uid = self::$user->getUID();
 
-        $userDeletedFolderName = "{$uid}__deleted";
-        if ($suRoot->nodeExists($userDeletedFolderName)) {
-            $userDeletedFolderName = $suRoot->getNonExistingName($userDeletedFolderName);
-        }
-        $userDeletedFolder = $suRoot->newFolder($userDeletedFolderName);
+        $trashbin = new Trashbin();
+        $copyFilesToUserCb = function () {
+            return static::copyFilesToUser(...func_get_args());
+        };
+        $copyFilesToUser = $copyFilesToUserCb->bindTo($trashbin, Trashbin::class);
 
         foreach ($files as $file) {
             $originalLocation = $file->getOriginalLocation();
-            $this->getLogger()->warning(__METHOD__ . ": about to delete {$originalLocation}");
 
             if (!$this->wasPathShared($originalLocation)) {
                 continue;
@@ -138,28 +127,9 @@ class DeleteServerPlugin extends ServerPlugin
 
             self::$processedFiles[] = $originalLocation;
 
-            $parts = explode('/', trim($originalLocation, '/'));
-            if (count($parts) === 1) {
-                $name = $userDeletedFolder->getNonExistingName($originalLocation);
-                $newFile = $suRoot->newFile($name);
-            } else {
-                /** @var Folder $lastDir */
-                $lastDir = $userDeletedFolder;
-                $fileName = array_pop($parts);
-
-                foreach ($parts as $part) {
-                    $lastDir = $lastDir->newFolder($part);
-                }
-
-                $name = $userDeletedFolder->getNonExistingName($fileName);
-                $newFile = $lastDir->newFile($name);
-            }
-
-            $newFile->putContent($file->get());
+            $copyFilesToUser($originalLocation, $uid, $originalLocation, $su->getUID(), $file->getDeletionTime());
         }
-        /** @var ITrashManager $trashManager */
-        $trashManager = $this->getOcaServer()->query(ITrashManager::class);
-        $trashManager->moveToTrash($userDeletedFolder->getStorage(), $userDeletedFolder->getInternalPath());
+
 
         return true;
     }
@@ -204,26 +174,6 @@ class DeleteServerPlugin extends ServerPlugin
         });
 
         return $superAdmin;
-    }
-
-    /**
-     * @return ILogger
-     */
-    private function getLogger(): ILogger
-    {
-        if (!self::$logger && $this->getApp()) {
-            $this->setLogger($this->getOcaServer()->getLogger());
-        }
-
-        return self::$logger;
-    }
-
-    /**
-     * @param ILogger $logger
-     */
-    private function setLogger(ILogger $logger): void
-    {
-        self::$logger = $logger;
     }
 
     /**
@@ -347,28 +297,10 @@ class DeleteServerPlugin extends ServerPlugin
 
         foreach (self::$shares as $share) {
             if (strpos($path, $share) !== false) {
-                $this->getLogger()->warning(__METHOD__ . ": {$path} was shared in {$share}");
-
                 return true;
             }
         }
 
         return false;
-    }
-
-    /**
-     * @return Folder|null
-     */
-    private function getSuperAdminRoot(): ?Folder
-    {
-        if (!self::$suRoot) {
-            if (!$su = $this->getSuperAdmin()) {
-                return null;
-            }
-
-            self::$suRoot = $this->getOcaServer()->getRootFolder()->getUserFolder($su->getUID());
-        }
-
-        return self::$suRoot;
     }
 }
