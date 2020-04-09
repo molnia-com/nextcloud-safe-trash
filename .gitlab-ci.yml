@@ -1,0 +1,17 @@
+stages:
+  - build
+
+build:
+  stage: build
+  image: composer:1.10
+  script:
+    - composer install --no-ansi --no-interaction --ignore-platform-reqs
+    - mkdir -p /build/restrictedtrashbin
+    - cp -R appinfo /build/restrictedtrashbin/appinfo
+    - cp -R lib /build/restrictedtrashbin/lib
+    - cp -R vendor /build/restrictedtrashbin/composer
+    - cd /build
+    - zip restrictedtrashbin.zip -r restrictedtrashbin
+  artifacts:
+    paths:
+      - /build/restrictedtrashbin.zip
