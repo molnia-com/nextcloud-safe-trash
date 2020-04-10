@@ -11,6 +11,6 @@ build:
     - cp -R lib ./restrictedtrashbin/lib
     - cp -R vendor ./restrictedtrashbin/composer
   artifacts:
-    name: "restrictedtrashbin-$CI_COMMIT_REF_NAME"
+    name: "restrictedtrashbin-$CI_COMMIT_SHORT_SHA"
     paths:
       - ./restrictedtrashbin
