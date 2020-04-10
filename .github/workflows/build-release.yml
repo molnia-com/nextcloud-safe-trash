@@ -14,7 +14,6 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Prepare zip
-        uses: actions/checkout@v2
         run: |
           composer install --no-ansi --no-interaction --ignore-platform-reqs && \
           mkdir ./safetrash && \
