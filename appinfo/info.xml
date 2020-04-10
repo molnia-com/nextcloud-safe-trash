@@ -12,12 +12,16 @@
     <types>
         <dav/>
     </types>
+    <documentation>
+        <user>https://github.com/molnia-com/nextcloud-safe-trash/blob/master/README.md</user>
+        <admin>https://github.com/molnia-com/nextcloud-safe-trash/blob/master/INSTALL.md</admin>
+    </documentation>
     <category>files</category>
     <bugs>https://github.com/molnia-com/nextcloud-safe-trash/issues</bugs>
     <repository>https://github.com/molnia-com/nextcloud-safe-trash</repository>
     <dependencies>
-        <nextcloud min-version="18" max-version="18"/>
         <php min-version="7.3" max-version="7.4"/>
+        <nextcloud min-version="18" max-version="18"/>
     </dependencies>
     <sabre>
         <plugins>
