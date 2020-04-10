@@ -1,0 +1,45 @@
+name: Nextcloud safe trash
+description: Builds release on tag push
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  build:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Prepare zip
+        uses: actions/checkout@v2
+        run: |
+          composer install --no-ansi --no-interaction --ignore-platform-reqs && \
+          mkdir ./safetrash && \
+          cp -R appinfo ./safetrash/appinfo && \
+          cp -R lib ./safetrash/lib && \
+          cp -R vendor ./safetrash/composer && \
+          zip safetrash.zip -r safetrash
+
+      - name: Create Release
+        id: creatre_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.ref }}
+          release_name: v${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ./safetrash.zip
+          asset_name: safetrash.zip
+          asset_content_type: application/zip
