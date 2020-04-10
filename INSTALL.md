@@ -1,5 +1,4 @@
-# Установка
+# Installation
 
-Распаковать архив в папку apps в корне nextcloud'а. Затем, от имени
-администратора перейти к установке приложений: `/settings/apps/disabled`, найти
-там `Restricted Trashbin` и нажать "Включить".
+Unzip into `apps` in nextcloud folder on server, then go to 'Apps' admin
+panel -> 'Disabled apps' -> find 'Safe Trash' in the list and click 'Enable'

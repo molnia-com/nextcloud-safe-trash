@@ -3,8 +3,8 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
     <id>safetrash</id>
     <name>Safe Trash</name>
-    <summary>Copy all data</summary>
-    <description><![CDATA[Restricted access to shared trash only for admins]]></description>
+    <summary>Empty trash bin move files to admin user. Don't delete files by OS.</summary>
+    <description><![CDATA[Empty trash bin move files to admin user. Don't delete files by OS.]]></description>
     <version>0.0.1</version>
     <licence>agpl</licence>
     <author mail="sdrobov@molnia.com">Sergey Drobov</author>
