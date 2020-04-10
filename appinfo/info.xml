@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
-    <id>restrictedtrashbin</id>
-    <name>Restricted Trashbin</name>
-    <summary>Restricted access to shared trash only for admins</summary>
+    <id>safetrash</id>
+    <name>Safe Trash</name>
+    <summary>Copy all data</summary>
     <description><![CDATA[Restricted access to shared trash only for admins]]></description>
     <version>0.0.1</version>
     <licence>agpl</licence>
@@ -13,7 +13,8 @@
         <dav/>
     </types>
     <category>files</category>
-    <bugs>https://gtl.infra.molnia.com/nextcloud/plugin-admin-empty-trash/issues</bugs>
+    <bugs>https://github.com/molnia-com/nextcloud-safe-trash/issues</bugs>
+    <repository>https://github.com/molnia-com/nextcloud-safe-trash</repository>
     <dependencies>
         <nextcloud min-version="18" max-version="18"/>
         <php min-version="7.3" max-version="7.4"/>

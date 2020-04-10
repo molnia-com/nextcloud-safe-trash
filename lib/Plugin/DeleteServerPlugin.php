@@ -1,5 +1,23 @@
 <?php
-
+/**
+ * @copyright Copyright (c) 2020, Molnia, LLC.
+ *
+ * @author Sergey Drobov <sdrobov@molnia.com>
+ *
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program. If not, see <http://www.gnu.org/licenses/>
+ */
 
 namespace OCA\Molnia\Plugin;
 
@@ -22,285 +40,295 @@ use Throwable;
 
 class DeleteServerPlugin extends ServerPlugin
 {
-    /** @var Server */
-    private static $server;
+	/** @var Server */
+	private static $server;
 
-    /** @var App */
-    private static $app;
+	/** @var App */
+	private static $app;
 
-    /** @var IServerContainer */
-    private static $ocaServer;
+	/** @var IServerContainer */
+	private static $ocaServer;
 
-    /** @var IUser */
-    private static $user;
+	/** @var IUser */
+	private static $user;
 
-    /** @var string[] */
-    private static $shares = [];
+	/** @var string[] */
+	private static $shares = [];
 
-    /** @var string[] */
-    private static $processedFiles = [];
+	/** @var string[] */
+	private static $processedFiles = [];
 
-    /**
-     * @return App
-     */
-    public function getApp(): App
-    {
-        return self::$app;
-    }
+	/**
+	 * @inheritDoc
+	 */
+	public function initialize(Server $server): void {
+		$this->setServer($server);
+		$this->getServer()->on('beforeUnbind', [$this, 'beforeUnbind']);
+	}
 
-    /**
-     * @inheritDoc
-     */
-    public function initialize(Server $server): void
-    {
-        $this->setServer($server);
-        $this->getServer()->on('beforeUnbind', [$this, 'beforeUnbind']);
-    }
+	/**
+	 * @param Server $server
+	 */
+	private function setServer(Server $server): void {
+		self::$server = $server;
+	}
 
-    /**
-     * @param string $fullUri
-     * @return bool
-     */
-    public function beforeUnbind(string $fullUri): bool
-    {
-        // beforeUnbind вызывается так же при перемещении
-        if (!$this->isDelete()) {
-            return true;
-        }
+	/**
+	 * @return Server
+	 */
+	private function getServer(): Server {
+		return self::$server;
+	}
 
-        if (!$this->getUser($fullUri)) {
-            return true;
-        }
+	/**
+	 * @param string $fullUri
+	 * @return bool
+	 */
+	public function beforeUnbind(string $fullUri): bool {
+		// beforeUnbind also called on MOVE, so we should check it is DELETE
+		if (!$this->isDelete()) {
+			return true;
+		}
 
-        if ($this->getOcaServer()->getGroupManager()->isAdmin(self::$user->getUID())) {
-            return true;
-        }
+		if (!$this->getUser($fullUri)) {
+			return true;
+		}
 
-        if (!$su = $this->getSuperAdmin()) {
-            throw new RuntimeException('Cant get superadmin');
-        }
+		if ($this->getOcaServer()
+			->getGroupManager()
+			->isAdmin(self::$user->getUID())
+		) {
+			return true;
+		}
 
-        try {
-            $node = $this->getServer()->tree->getNodeForPath($fullUri);
-        } catch (NotFound $e) {
-            return true;
-        }
+		if (!$su = $this->getSuperAdmin()) {
+			throw new RuntimeException('Cant get superadmin');
+		}
 
-        /** @var TrashFile[] $files */
-        $files = [];
-        switch (true) {
-            case ($node instanceof TrashRoot):
-            case ($node instanceof TrashFolder):
-                /** @var TrashRoot|TrashFolder $node */
-                $files = $this->getAllNodesRecursive($node);
+		try {
+			$node = $this->getServer()->tree->getNodeForPath($fullUri);
+		} catch (NotFound $e) {
+			return true;
+		}
 
-                break;
+		/** @var TrashFile[] $files */
+		$files = [];
+		switch (true) {
+			case ($node instanceof TrashRoot):
+			case ($node instanceof TrashFolder):
+				/** @var TrashRoot|TrashFolder $node */
+				$files = $this->getAllNodesRecursive($node);
 
-            case ($node instanceof TrashFile):
-                /** @var TrashFile $node */
-                $files = [$node];
+				break;
 
-                break;
+			case ($node instanceof TrashFile):
+				/** @var TrashFile $node */
+				$files = [$node];
 
-            default:
-                return true;
-        }
+				break;
 
-        $uid = self::$user->getUID();
+			default:
+				return true;
+		}
 
-        $trashbin = new Trashbin();
-        $copyFilesToUserCb = function () {
-            return static::copyFilesToUser(...func_get_args());
-        };
-        $copyFilesToUser = $copyFilesToUserCb->bindTo($trashbin, Trashbin::class);
+		$uid = self::$user->getUID();
 
-        foreach ($files as $file) {
-            $originalLocation = $file->getOriginalLocation();
+		$trashbin = new Trashbin();
+		$copyFilesToUserCb = function () {
+			return static::copyFilesToUser(...func_get_args());
+		};
+		$copyFilesToUser = $copyFilesToUserCb->bindTo(
+			$trashbin,
+			Trashbin::class
+		);
 
-            if (!$this->wasPathShared($originalLocation)) {
-                continue;
-            }
+		foreach ($files as $file) {
+			$originalLocation = $file->getOriginalLocation();
 
-            if (in_array($originalLocation, self::$processedFiles)) {
-                continue;
-            }
+			if (!$this->wasPathShared($originalLocation)) {
+				continue;
+			}
 
-            self::$processedFiles[] = $originalLocation;
+			if (in_array($originalLocation, self::$processedFiles)) {
+				continue;
+			}
 
-            $copyFilesToUser($originalLocation, $uid, $originalLocation, $su->getUID(), $file->getDeletionTime());
-        }
+			self::$processedFiles[] = $originalLocation;
+
+			$copyFilesToUser(
+				$originalLocation,
+				$uid,
+				$originalLocation,
+				$su->getUID(),
+				$file->getDeletionTime()
+			);
+		}
 
 
-        return true;
-    }
+		return true;
+	}
 
-    /**
-     * @param App $app
-     */
-    public function setApp(App $app): void
-    {
-        self::$app = $app;
-    }
+	/**
+	 * @return bool
+	 */
+	private function isDelete(): bool {
+		$method = $this->getOcaServer()->
+			getRequest()->
+			getMethod();
 
-    /**
-     * @return bool
-     */
-    private function isDelete(): bool
-    {
-        return strtolower($this->getOcaServer()->getRequest()->getMethod()) === 'delete';
-    }
+		return strtolower($method) === 'delete';
+	}
 
-    /**
-     * @return IUser|null
-     */
-    private function getSuperAdmin(): ?IUser
-    {
-        // fast
-        if (
-            ($serverAdminGroup = $this->getOcaServer()
-                ->getGroupManager()
-                ->get('admin')) && $adminUsers = $serverAdminGroup->getUsers()
-        ) {
-            return current($adminUsers);
-        }
+	/**
+	 * @return IServerContainer
+	 */
+	private function getOcaServer(): IServerContainer {
+		if (!self::$ocaServer && $this->getApp()) {
+			$this->setOcaServer($this->getApp()->getContainer()->getServer());
+		}
 
-        // safe
-        /** @var IUser $superAdmin */
-        $superAdmin = null;
-        $this->getOcaServer()->getUserManager()->callForAllUsers(function (IUser $user) use (&$superAdmin) {
-            if (!$superAdmin && $this->getOcaServer()->getGroupManager()->isAdmin($user)) {
-                $superAdmin = $user;
-            }
-        });
+		return self::$ocaServer;
+	}
 
-        return $superAdmin;
-    }
+	/**
+	 * @return App
+	 */
+	public function getApp(): App {
+		return self::$app;
+	}
 
-    /**
-     * @return IServerContainer
-     */
-    private function getOcaServer(): IServerContainer
-    {
-        if (!self::$ocaServer && $this->getApp()) {
-            $this->setOcaServer($this->getApp()->getContainer()->getServer());
-        }
+	/**
+	 * @param IServerContainer $ocaServer
+	 */
+	private function setOcaServer(IServerContainer $ocaServer): void {
+		self::$ocaServer = $ocaServer;
+	}
 
-        return self::$ocaServer;
-    }
+	/**
+	 * @param string $fullUri
+	 * @return IUser|null
+	 */
+	private function getUser(string $fullUri): ?IUser {
+		if (!self::$user) {
+			$baseUri = $this->getServer()->getBaseUri();
+			$userAndFilePath = preg_replace("#{$baseUri}#", '', $fullUri);
+			$parts = explode('/', $userAndFilePath);
+			array_shift($parts);
+			$uid = array_shift($parts);
 
-    /**
-     * @param IServerContainer $ocaServer
-     */
-    private function setOcaServer(IServerContainer $ocaServer): void
-    {
-        self::$ocaServer = $ocaServer;
-    }
+			self::$user = $this->getOcaServer()->getUserManager()->get($uid);
+		}
 
-    /**
-     * @param Server $server
-     */
-    private function setServer(Server $server): void
-    {
-        self::$server = $server;
-    }
+		return self::$user;
+	}
 
-    /**
-     * @return Server
-     */
-    private function getServer(): Server
-    {
-        return self::$server;
-    }
+	/**
+	 * @return IUser|null
+	 */
+	private function getSuperAdmin(): ?IUser {
+		// fast
+		if (
+			($serverAdminGroup = $this->getOcaServer()
+				->getGroupManager()
+				->get('admin')) && $adminUsers = $serverAdminGroup->getUsers()
+		) {
+			return current($adminUsers);
+		}
 
-    /**
-     * @param string $fullUri
-     * @return IUser|null
-     */
-    private function getUser(string $fullUri): ?IUser
-    {
-        if (!self::$user) {
-            $baseUri = $this->getServer()->getBaseUri();
-            $userAndFilePath = preg_replace("#{$baseUri}#", '', $fullUri);
-            $parts = explode('/', $userAndFilePath);
-            array_shift($parts);
-            $uid = array_shift($parts);
+		// safe
+		/** @var IUser $superAdmin */
+		$superAdmin = null;
+		$this->getOcaServer()
+			->getUserManager()
+			->callForAllUsers(function (IUser $user) use (&$superAdmin) {
+				if (!$superAdmin
+					&& $this->getOcaServer()->getGroupManager()->isAdmin($user)
+				) {
+					$superAdmin = $user;
+				}
+			});
 
-            self::$user = $this->getOcaServer()->getUserManager()->get($uid);
-        }
+		return $superAdmin;
+	}
 
-        return self::$user;
-    }
+	/**
+	 * @param ICollection $collection
+	 * @return INode[]
+	 */
+	private function getAllNodesRecursive(ICollection $collection): array {
+		$nodes = [];
+		foreach ($collection->getChildren() as $child) {
+			if ($child instanceof ICollection) {
+				$nodes = array_merge(
+					$nodes,
+					$this->getAllNodesRecursive($child)
+				);
+			} else {
+				$nodes[] = $child;
+			}
+		}
 
-    /**
-     * @param ICollection $collection
-     * @return INode[]
-     */
-    private function getAllNodesRecursive(ICollection $collection): array
-    {
-        $nodes = [];
-        foreach ($collection->getChildren() as $child) {
-            if ($child instanceof ICollection) {
-                $nodes = array_merge($nodes, $this->getAllNodesRecursive($child));
-            } else {
-                $nodes[] = $child;
-            }
-        }
+		return $nodes;
+	}
 
-        return $nodes;
-    }
+	/**
+	 * @param string $path
+	 * @return bool
+	 */
+	private function wasPathShared(string $path): bool {
+		if (!self::$shares) {
+			self::$shares = [];
 
-    /**
-     * @param string $path
-     * @return bool
-     */
-    private function wasPathShared(string $path): bool
-    {
-        if (!self::$shares) {
-            self::$shares = [];
+			foreach (
+				[
+					IShare::TYPE_USER,
+					IShare::TYPE_GROUP,
+					IShare::TYPE_USERGROUP,
+					IShare::TYPE_LINK,
+					IShare::TYPE_EMAIL,
+					IShare::TYPE_REMOTE,
+					IShare::TYPE_CIRCLE,
+					IShare::TYPE_REMOTE_GROUP,
+					IShare::TYPE_ROOM,
+				] as $shareType
+			) {
+				try {
+					$shares = $this->getOcaServer()
+						->getShareManager()
+						->getSharedWith(self::$user->getUID(), $shareType);
+					$sharePaths = array_map(static function (IShare $share) {
+						$sharePath = $share->getNode()->getPath();
+						$sharePath = trim($sharePath, '/');
+						$pathParts = explode('/', $sharePath);
+						array_shift($pathParts); // user
+						array_shift($pathParts); // 'files'
 
-            foreach (
-                [
-                    IShare::TYPE_USER,
-                    IShare::TYPE_GROUP,
-                    IShare::TYPE_USERGROUP,
-                    IShare::TYPE_LINK,
-                    IShare::TYPE_EMAIL,
-                    IShare::TYPE_REMOTE,
-                    IShare::TYPE_CIRCLE,
-                    IShare::TYPE_REMOTE_GROUP,
-                    IShare::TYPE_ROOM,
-                ] as $shareType
-            ) {
-                try {
-                    $shares = $this->getOcaServer()
-                        ->getShareManager()
-                        ->getSharedWith(self::$user->getUID(), $shareType);
-                    $sharePaths = array_map(static function (IShare $share) {
-                        $sharePath = $share->getNode()->getPath();
-                        $sharePath = trim($sharePath, '/');
-                        $pathParts = explode('/', $sharePath);
-                        array_shift($pathParts); // user
-                        array_shift($pathParts); // 'files'
+						return implode('/', $pathParts);
+					},
+						$shares);
 
-                        return implode('/', $pathParts);
-                    },
-                        $shares);
+					self::$shares = array_merge(self::$shares, $sharePaths);
+				} catch (Throwable $e) {
+					continue;
+				}
+			}
 
-                    self::$shares = array_merge(self::$shares, $sharePaths);
-                } catch (Throwable $e) {
-                    continue;
-                }
-            }
+			self::$shares = array_filter(array_unique(self::$shares));
+		}
 
-            self::$shares = array_filter(array_unique(self::$shares));
-        }
+		foreach (self::$shares as $share) {
+			if (strpos($path, $share) !== false) {
+				return true;
+			}
+		}
 
-        foreach (self::$shares as $share) {
-            if (strpos($path, $share) !== false) {
-                return true;
-            }
-        }
+		return false;
+	}
 
-        return false;
-    }
+	/**
+	 * @param App $app
+	 */
+	public function setApp(App $app): void {
+		self::$app = $app;
+	}
 }
